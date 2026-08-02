@@ -20,7 +20,7 @@ Chunking: Verified using `tests/manual-test.mjs` for the mock-rule fixture end-t
 
 Caching: Automated via `manual-test.mjs` — resubmitting an identical `{diff, options}` payload correctly reports `cacheHit: true` with identical findings.  
 
-Idempotency: Automated via `manual-test.mjs` — submitting with the same Idempotency-Key and body returns the original jobId, while using the same key with a modified body correctly triggers a 409 Conflict response.  
+Idempotency: Automated via `manual-test.mjs` — submitting with the same Idempotency-Key and body returns the original `jobId`, while using the same key with a modified body correctly triggers a `409 Conflict` response.  
 
 SSE Replay: Automated via `manual-test.mj`s — once a review job reaches done, reconnecting to /stream successfully replays the entire recorded event sequence (status, finding, and done).  
 
