@@ -1,49 +1,59 @@
 # AI Diff Review Service
 
-Implements the take-home contract: clients POST a unified diff, the service
-reviews it asynchronously via a pluggable provider (`mock` or `llm`), and
-returns structured findings, pollable and streamable via SSE.
+Helloo! This project implements the AI Diff Review Service. Clients submit a unified diff, the service reviews it asynchronously using a pluggable provider (`mock` or `llm`), and returns structured findings that can be retrieved by polling or streamed via SSE.
 
 ## Requirements
 
-- Node.js 18+ (uses the global `fetch` API for the LLM provider)
+* Node.js 18 or later (uses the global `fetch` API for the LLM provider)
 
-## Setup
+## Getting Started
 
 ```bash
 npm install
 cp .env.example .env
-# edit .env: set BEARER_TOKEN to a random secret, e.g.
-#   openssl rand -hex 24
+
+# Edit .env and set BEARER_TOKEN to a random secret, for example:
+# openssl rand -hex 24
 ```
 
-## Run locally
+## Running the Service
 
 ```bash
-npm run dev       # ts-node-dev, auto-restarts on change
+npm run dev       # Development mode with auto reload
+
 # or
+
 npm run build && npm start
 ```
 
-Server listens on `PORT` (default 3000).
+The server listens on `PORT`, which defaults to `3000`.
 
-## Verify it works
+## Quick Verification
 
-With the server running in one terminal:
+With the server running in another terminal:
 
 ```bash
 BASE_URL=http://localhost:3000 TOKEN=<your BEARER_TOKEN> npm run test:manual
 ```
 
-This exercises: health/spec, auth on all `/v1` routes, every mock rule via a
-crafted fixture diff, ordering/dedup, caching, idempotency (same key/body vs.
-same key/different body), SSE replay, 5-way concurrency, and 404 handling.
+The script exercises:
 
-Two things the script does **not** cover automatically (test these manually,
-see below): sustained rate limiting (30/min + burst → 429) and the `llm`
-provider path (requires `ANTHROPIC_API_KEY`).
+* Health and specification endpoints
+* Authentication across all `/v1` routes
+* Every mock review rule using fixture diffs
+* Result ordering and deduplication
+* Response caching
+* Idempotency behavior
+* SSE replay
+* Five concurrent jobs
+* 404 handling
 
-### Manually verify rate limiting
+The script intentionally leaves two scenarios for manual testing:
+
+* Sustained rate limiting (30 requests per minute leading to `429`)
+* The `llm` provider, which requires `ANTHROPIC_API_KEY`
+
+### Verify Rate Limiting
 
 ```bash
 for i in $(seq 1 45); do
@@ -55,61 +65,45 @@ for i in $(seq 1 45); do
 done
 ```
 
-You should see `202` for the first ~30-40, then `429` with a `Retry-After`
-header once the bucket empties.
+You should receive `202` responses and then  `429` once the rate limit is exceeded.
 
-### Manually verify the LLM path
+### Verify the LLM Provider
 
 ```bash
-# set ANTHROPIC_API_KEY in .env, restart the server, then:
-curl -X POST http://localhost:3000/v1/reviews \
-  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"diff":"...", "options":{"provider":"llm"}}'
-# poll the returned jobId - should reach "done" with model-generated findings.
+# Set ANTHROPIC_API_KEY in .env and restart the server.
 
-# then unset the key / stop the model server and confirm it fails gracefully:
-# the job should reach "status":"failed" with a clear error, not crash the process.
+curl -X POST http://localhost:3000/v1/reviews \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"diff":"...", "options":{"provider":"llm"}}'
 ```
 
-## Architecture (10 lines)
+Poll the returned `jobId`. The job should complete successfully with model generated findings.
 
-`diff/parser.ts` turns a unified diff into per-file structures with correct
-new-file line numbers for added lines. `diff/chunker.ts` groups those files
-into ≤64KiB chunks on file boundaries only. `rules/mockRules.ts` is the
-deterministic rule engine (9 rules); `providers/mock.ts` and
-`providers/llm.ts` share the same `(files) => Finding[]` interface, so the
-pipeline runner (`pipeline/runner.ts`) doesn't care which one it's calling.
-The runner is a hand-rolled semaphore queue capped at 4 concurrent jobs;
-processing a job chunks the diff, runs the provider per chunk, then merges,
-dedupes, sorts, and truncates to `maxFindings`. `store/jobStore.ts` holds
-jobs, a `bodyHash -> result` cache (for byte-identical resubmission), and an
-`idempotencyKey -> {bodyHash, jobId}` map (kept intentionally separate from
-the cache, since they answer different questions). SSE just replays a job's
-recorded event log, then live-forwards new events via a subscriber set.
+Then remove the API key or make the provider unavailable. The job should transition to `"status":"failed"` with a clear error message while the service continues running normally.
 
-## Provider design
+## Architecture
 
-Both providers implement `(files: ParsedFile[]) => Promise<Finding[]>` and
-are called identically by the runner, per chunk. `mock` is pure
-pattern-matching over already-parsed added lines - no state, no I/O, fully
-deterministic. `llm` sends the raw diff chunk to Anthropic's API with a
-system prompt that explicitly tells the model to treat diff content as data,
-never as instructions (this is a secondary defense; the primary defense
-against prompt injection is that neither provider's *code path* branches on
-diff content in a way that could change service behavior - `mockRules.ts`
-only ever uses line content for regex matching). Any LLM failure (missing
-key, network error, bad response, unparseable output) raises a typed
-`ProviderError`, caught by the runner and turned into a `failed` job with a
-`code`/`message` - never an uncaught exception.
+`diff/parser.ts` converts a unified diff into per file structures while preserving correct line numbers for added lines. `diff/chunker.ts` groups files into chunks of up to 64 KiB without splitting files.
 
-## What I'd do next with more time
+The review pipeline is provider agnostic. Both `providers/mock.ts` and `providers/llm.ts` implement the same interface, allowing `pipeline/runner.ts` to process either provider without special handling. Jobs are processed through a semaphore limited to four concurrent workers. Results from each chunk are merged, deduplicated, sorted, and capped at `maxFindings`.
 
-- Persist jobs/cache to a real store (Redis or Postgres) - right now
-  everything is in-memory and lost on restart.
-- Smarter MOCK-004 (empty catch) detection - the current heuristic only
-  looks at *added* lines contiguous in the new file; a catch block that
-  mixes added and unchanged lines could be missed.
-- Per-IP or per-key rate limit tuning based on real traffic patterns instead
-  of a fixed burst constant.
-- Structured logging/metrics per job (latency, chunk count, provider used)
-  for observability.
+`store/jobStore.ts` manages job state, response caching for identical submissions, and idempotency tracking. SSE clients receive the complete event history when they connect, followed by live updates as processing continues.
+
+## Provider Design
+
+Both providers implement `Promise<Finding[]>` over parsed files and are invoked identically by the pipeline.
+
+The `mock` provider performs deterministic pattern matching against added lines and contains no external dependencies.
+
+The `llm` provider submits each diff chunk to Anthropic with a system prompt that treats diff content strictly as data rather than instructions. As an additional safeguard, service behavior never branches on diff content itself. Any provider failure, including missing credentials, network issues, invalid responses, or parsing errors, is converted into a typed `ProviderError`. The pipeline reports these as failed jobs with structured error information rather than allowing uncaught exceptions.
+
+## Future Improvements
+
+Given more time, I would prioritize:
+
+* Persisting jobs and caches in Redis or PostgreSQL instead of memory.
+* Improving `MOCK-004` detection to handle mixed added and unchanged lines within `catch` blocks.
+* Refining rate limiting based on production traffic patterns instead of a fixed burst threshold.
+* Adding structured logging and metrics for latency, chunk processing, provider usage, and overall observability.
+
