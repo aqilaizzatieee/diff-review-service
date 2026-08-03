@@ -38,12 +38,11 @@ I developed this using Claude to generate the initial TypeScript implementation 
 
 ## An AI suggestion I rejected, and why
 
-The default service design includes both a mock provider and a real llm provider using the Anthropic API. Although connecting a live API key would have made a nice demo, I decided against it. The assignment instructions clearly state that only the mock provider is evaluated for scoring, while the llm path simply needs to handle errors properly if it isn't set up. Adding an external dependency or spending money on an unscored feature was not the right trade-off. Instead, I tested the error handling directly: requesting the llm provider correctly returns a failed status with a clear error message, without crashing the application.
+The default service design includes both a mock provider and a real llm provider using the Anthropic API. Although connecting a live API key would have made a nice demo, I decided against it. The assignment instructions clearly state that only the mock provider is evaluated for scoring, while the llm path simply needs to handle errors properly if it isn't set up. Adding an external dependency or spending money on an unscored feature was not the right trade-off. Instead, I tested the error handling directly. Requesting the llm provider correctly returns a failed status with a clear error message, without crashing the application.
 
 ## What I'd do next with more time
 
 - Persist state to Redis/Postgres instead of in-memory maps.
-- Strengthen MOCK-004 detection for catch blocks that mix added and
-  unchanged context lines.
+- Strengthen MOCK-004 detection for catch blocks that mix added and unchanged context lines.
 - Tune rate-limit burst allowance against real traffic.
 - Add structured per-job logging/metrics.
